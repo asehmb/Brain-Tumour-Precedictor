@@ -69,24 +69,81 @@ def show_img(img):
     plt.imshow(npimg.T)
     plt.show()
 
-if __name__ == "__main__":
-    model = CNN(in_channels=1, num_classes=4)
 
-    loss_fn = nn.CrossEntropyLoss()             #using cross entropy loss
+def check_accuracy(loader, model):
+    """Calculates model accuracy on a given DataLoader."""
+    num_correct = 0
+    num_samples = 0
+    model.eval()  # Set model to evaluation mode (disables dropout, batchnorm updates)
+
+    with torch.no_grad():  # Do not calculate gradients during evaluation
+        for x, y in loader:
+            x = x.to(device)
+            y = y.to(device)
+
+            scores = model(x)
+            # Get the index of the max value (the predicted class)
+            _, predictions = scores.max(1)
+            num_correct += (predictions == y).sum()
+            num_samples += predictions.size(0)
+
+    accuracy = float(num_correct) / float(num_samples) * 100
+    model.train()  # Set model back to training mode
+    return accuracy
+
+
+if __name__ == "__main__":
+    # Ensure model and data are on the same device
+    model = CNN(in_channels=1, num_classes=NUM_CLASSES).to(device)
+
+    loss_fn = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
+    # Initialize lists to store stats for plotting later
+    history = {'train_loss': [], 'test_accuracy': []}
+
     for epoch in range(EPOCHS):
-        running_loss = 0
-        print(f'Epoch {epoch+1}/{EPOCHS}')
+        running_loss = 0.0
+
+        print(f'\n--- Epoch {epoch + 1}/{EPOCHS} ---')
+
+        # Training loop
+        model.train()  # Ensure model is in training mode
         for batch_idx, (inputs, targets) in enumerate(tqdm(train_loader)):
+            inputs, targets = inputs.to(device), targets.to(device)
 
             outputs = model(inputs)
             loss = loss_fn(outputs, targets)
 
             optimizer.zero_grad()
             loss.backward()
-
             optimizer.step()
 
+            running_loss += loss.item() * inputs.size(0)  # Accumulate weighted loss
 
+        # Calculate and record statistics
+        epoch_loss = running_loss / len(train_set)
+        history['train_loss'].append(epoch_loss)
 
+        # Check test accuracy
+        test_acc = check_accuracy(test_loader, model)
+        history['test_accuracy'].append(test_acc)
+
+        # Output stats
+        print(f"Training Loss: {epoch_loss:.4f}")
+        print(f"Test Accuracy: {test_acc:.2f}%")
+
+    print('\nFinished Training')
+
+    # Final evaluation (optional, as it was done on the last epoch)
+    final_test_acc = check_accuracy(test_loader, model)
+    print(f'Final Test Accuracy: {final_test_acc:.2f}%')
+
+    # Example of how to use the tracked history for plotting
+    # plt.figure(figsize=(10, 4))
+    # plt.plot(history['train_loss'], label='Training Loss')
+    # plt.title('Loss over Epochs')
+    # plt.xlabel('Epoch')
+    # plt.ylabel('Loss')
+    # plt.legend()
+    # plt.show()
