@@ -32,11 +32,7 @@ test_loader = DataLoader(dataset=test_dataset, batch_size= 256, shuffle=True)
 def show_img(img):
     img = img * 0.5 + 0.5
     npimp = img.numpy()
-    # Handle grayscale images properly
-    if npimp.shape[0] == 1:  # Single channel grayscale
-        plt.imshow(npimp[0], cmap='gray')
-    else:  # Multi-channel
-        plt.imshow(np.transpose(npimp, (1, 2, 0)))
+    plt.imshow(npimp.T)
     plt.show()
 
 print(len(train_dataset))
@@ -44,8 +40,7 @@ print(len(test_dataset))
 train_iter = iter(train_loader)
 images, labels = next(train_iter)
 print(labels)
-print(f"Image batch shape: {images.shape}")
-show_img(make_grid(images, nrow=8))
+show_img(make_grid(images))
 
 #shape
 ''' 
@@ -53,7 +48,7 @@ show_img(make_grid(images, nrow=8))
 '''
 
 class Model(nn.Module):
-    def __init__(self, in_channels = 1, num_classes = 4):
+    def __init__(self, num_classes):
         super(Model, self).__init__()
 
         # input layer
@@ -62,7 +57,7 @@ class Model(nn.Module):
         self.dropout = nn.Dropout(p = 0.5)
 
         # convolutional layers
-        self.conv1 = nn.Conv2d(in_channels = in_channels, out_channels = 32, kernel_size = 3, padding = 1)    # 32, 224, 224
+        self.conv1 = nn.Conv2d(in_channels = 3, out_channels = 32, kernel_size = 3, padding = 1)    # 32, 224, 224
         self.conv2 = nn.Conv2d(in_channels = 32, out_channels = 64, kernel_size = 3, padding = 1)   # 64, 112, 112
         self.conv3 = nn.Conv2d(in_channels = 64, out_channels = 128, kernel_size = 3, padding = 1)  # 128, 56, 56
         self.conv4 = nn.Conv2d(in_channels = 128, out_channels = 256, kernel_size = 3, padding = 1) # 256, 28, 28
@@ -90,7 +85,7 @@ def check_accuracy(loader, model):
     """Calculates model accuracy on a given DataLoader."""
     num_correct = 0
     num_samples = 0
-    model.eval()  # Set model to evaluation mode (disables dropout, batchnorm updates)
+    model.eval()  # Set model to evaluation mode (disables dropout, batch norm updates)
 
     with t.no_grad():  # Do not calculate gradients during evaluation
         for x, y in loader:
@@ -109,8 +104,8 @@ def check_accuracy(loader, model):
 
 
 
-LEARNING_RATE = 0.01
-model = Model(in_channels = 1, num_classes=4).to(device)
+LEARNING_RATE = 0.001
+model = Model( num_classes = 4).to(device)
 EPOCHS = 10
 loss_fn = nn.CrossEntropyLoss()             #using cross entropy loss
 optimizer = t.optim.Adam(model.parameters(), lr=LEARNING_RATE)

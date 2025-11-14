@@ -19,11 +19,9 @@
 
 #TODO: refactor and clean up code, add comments where necessary
 #TODO: see where and if relu should be replaced with gelu
-import torch
+
 import torchvision
 import torchvision.transforms as transforms
-from torch import nn
-import torch.nn.functional as F
 from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
@@ -115,7 +113,7 @@ class SmallResNet(nn.Module):
         self.stem = nn.Sequential(
             nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False),
             nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=True),      # I'll try GELU in this case
             nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
         )
         # Output after stem: ~ (B, 64, 56, 56) for 224×224 input
@@ -123,14 +121,17 @@ class SmallResNet(nn.Module):
 
         self.layer1 = self._make_layer(64, 64, num_blocks=2, stride=1)
 
-        # TODO: is it worth adding more layers or changing num_blocks?
+        # TODO: is it worth adding more layers or changing num_blocks? # matter of fact letme change the layer a lil bit
+        # then i'll add 1 more layer. And see how it goes
         self.layer2 = self._make_layer(64, 128, num_blocks=2, stride=2)
 
         self.layer3 = self._make_layer(128, 256, num_blocks=2, stride=2)
 
-        self.layer4 = self._make_layer(256, 512, num_blocks=2, stride=2)
+        self.layer4 = self._make_layer(256, 256, num_blocks=2, stride=2)
 
-        # After layer2 (with 224×224 input): (B, 128, 28, 28)
+        self.layer5 = self._make_layer(256, 512, num_blocks=2, stride=2)
+
+        # After layer2 (with 224×224 input): (B, 128, 28, 28) --> (B, 64, 112, 112)
 
         # ---- Global average pool + FC ----
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))  # -> (B, 128, 1, 1)
@@ -196,6 +197,41 @@ class CNN(nn.Module):
         x = self.dropout(x)
         x = F.relu(self.fc1(x))         # apply full layer
         return x
+
+# 5 layers Model
+class Model(nn.Module):
+    def __init__(self, num_classes):
+        super(Model, self).__init__()
+
+        # input layer
+        self.relu = nn.ReLU()
+        self.pool = nn.MaxPool2d(kernel_size = 2, stride = 2)
+        self.dropout = nn.Dropout(p = 0.5)
+
+        # convolutional layers
+        self.conv1 = nn.Conv2d(in_channels = 3, out_channels = 32, kernel_size = 3, padding = 1)    # 32, 224, 224
+        self.conv2 = nn.Conv2d(in_channels = 32, out_channels = 64, kernel_size = 3, padding = 1)   # 64, 112, 112
+        self.conv3 = nn.Conv2d(in_channels = 64, out_channels = 128, kernel_size = 3, padding = 1)  # 128, 56, 56
+        self.conv4 = nn.Conv2d(in_channels = 128, out_channels = 256, kernel_size = 3, padding = 1) # 256, 28, 28
+        self.conv5 = nn.Conv2d(in_channels = 256, out_channels = 256, kernel_size = 3, padding = 1) # 256, 14, 14
+
+        # output layer
+        self.flatten = nn.Flatten()
+        self.fc1 = nn.Linear(in_features = 256 * 7 * 7, out_features = 512)
+        self.fc2 = nn.Linear(in_features = 512, out_features = num_classes)
+
+    def forward(self, x):
+        x = self.pool(self.relu(self.conv1(x)))     # B, 32, 112, 112
+        x = self.pool(self.relu(self.conv2(x)))     # B, 64, 56, 56
+        x = self.pool(self.relu(self.conv3(x)))     # B, 128, 28, 28
+        x = self.pool(self.relu(self.conv4(x)))     # B, 256, 14, 14
+        x = self.pool(self.relu(self.conv5(x)))     # B, 256, 7, 7
+        x = self.flatten(x)
+        x = self.dropout(self.relu(self.fc1(x)))
+        x = self.fc2(x)
+
+        return x
+
 
 def show_img(img):
     img = img * 0.5 + 0.5 # remove normalizations for visualization
@@ -370,3 +406,6 @@ if __name__ == "__main__":
     plt.title("Training Loss & Test Accuracy over Epochs")
     fig.tight_layout()
     plt.show()
+
+# Save model
+# torch.save(SmallResNet, 'Tumor_predictor.pt')
