@@ -17,9 +17,8 @@ device = "cuda" if t.cuda.is_available() else "cpu"
 
 #label the image data,
 transform = transforms.Compose([transforms.Resize((224,224)),
-                                transforms.Grayscale(num_output_channels=1),
                                 transforms.ToTensor(),
-                                transforms.Normalize((0.5,), (0.25,))])
+                                transforms.Normalize((0.5,0.5,0.5), (0.25,0.25,0.25))])
 
 #create data folder
 train_dataset = datasets.ImageFolder('Training', transform=transform)
@@ -33,7 +32,11 @@ test_loader = DataLoader(dataset=test_dataset, batch_size= 256, shuffle=True)
 def show_img(img):
     img = img * 0.5 + 0.5
     npimp = img.numpy()
-    plt.imshow(npimp.T)
+    # Handle grayscale images properly
+    if npimp.shape[0] == 1:  # Single channel grayscale
+        plt.imshow(npimp[0], cmap='gray')
+    else:  # Multi-channel
+        plt.imshow(np.transpose(npimp, (1, 2, 0)))
     plt.show()
 
 print(len(train_dataset))
@@ -41,7 +44,8 @@ print(len(test_dataset))
 train_iter = iter(train_loader)
 images, labels = next(train_iter)
 print(labels)
-show_img(make_grid(images))
+print(f"Image batch shape: {images.shape}")
+show_img(make_grid(images, nrow=8))
 
 #shape
 ''' 
