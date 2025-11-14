@@ -6,21 +6,24 @@ import torch.nn.functional as F
 from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
+from sklearn.model_selection import permutation_test_score
 
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from sklearn.metrics import classification_report, confusion_matrix
+import seaborn as sns
 
 #TODO: find out how to setup up mlx or the apple one
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.mps.is_available() else "cpu"
 print(device)
 
 # HYPER PARAMETERS
-EPOCHS = 15
+EPOCHS = 10
 BATCH_SIZE = 128
-LEARNING_RATE = 0.001 # maybe increase learning rate but increase epochs
+LEARNING_RATE = 0.001
 NUM_CLASSES = 4
 
 data_transforms = transforms.Compose(
@@ -132,7 +135,6 @@ class SmallResNet(nn.Module):
         # TODO: test dropout placement, maybe add more pooling?
         # x: (B, in_channels, H, W) e.g. (B, 3, 224, 224)
         x = self.stem(x)      # -> (B, 64, 56, 56)
-        # x = self.dropout(x)
         x = self.layer1(x)    # -> (B, 64, 56, 56)
         x = self.layer2(x)    # -> (B, 128, 28, 28)
         x = self.layer3(x)    # -> (B, 256, 14, 14)
@@ -140,6 +142,7 @@ class SmallResNet(nn.Module):
 
         x = self.global_pool(x)   # -> (B, 128, 1, 1)
         x = torch.flatten(x, 1)   # -> (B, 128)
+        x = self.dropout(x)
         x = self.fc(x)            # -> (B, num_classes) logits
         return x
 
@@ -181,6 +184,29 @@ def show_img(img):
     plt.show()
 
 
+def permutation_test(model, X, y, permutations=1000):
+    """
+    Permutation Ttest Implementation
+    model = trained model
+    X = input data (images)
+    y = true labels (labels)
+    permutations = number of permutations to perform
+    """
+    model.eval()
+    with torch.no_grad():
+        real_accuracy = (model(X).argmax(dim=1) == y).float().mean().item()
+    
+    permutation_accuracies = []
+    for _ in range(permutations):
+        permuted_y = y[torch.randperm(y.size(0))]
+        with torch.no_grad():
+            permuted_accuracy = (model(X).argmax(dim=1) == permuted_y).float().mean().item()
+        permutation_accuracies.append(permuted_accuracy)
+
+    pvalue = np.mean([s >= real_accuracy for s in permutation_accuracies])
+    return real_accuracy, permutation_accuracies, pvalue
+
+
 def check_accuracy(loader, model):
     """Calculates model accuracy on a given DataLoader."""
     num_correct = 0
@@ -202,10 +228,50 @@ def check_accuracy(loader, model):
     model.train()  # Set model back to training mode
     return accuracy
 
+def classification_summary(model, X, y_true, class_names=None):
+    """
+    Prints a classification report and plots a heatmap confusion matrix.
+
+    Parameters:
+        y_true: array-like, true labels
+        y_pred: array-like, predicted labels
+        class_names: list of class name strings (optional)
+    """
+    model.eval()
+    with torch.no_grad():
+        scores = model(X)
+        _, y_pred = scores.max(1)
+        y_pred = y_pred.cpu().numpy()
+        y_true = y_true.cpu().numpy()
+
+    # Classification Report
+    print("\n=== Classification Report ===")
+    print(classification_report(y_true, y_pred, target_names=class_names))
+
+    # Confusion Matrix
+    cm = confusion_matrix(y_true, y_pred)
+
+    # If no class names provided, auto-generate them
+    if class_names is None:
+        num_classes = cm.shape[0]
+        class_names = [f"Class {i}" for i in range(num_classes)]
+
+    # Plot Heatmap
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                xticklabels=class_names, yticklabels=class_names)
+    plt.xlabel("Predicted")
+    plt.ylabel("True")
+    plt.title("Confusion Matrix Heatmap")
+    plt.show()
+
 
 if __name__ == "__main__":
     # Ensure model and data are on the same device
     model = SmallResNet(in_channels=3, num_classes=NUM_CLASSES).to(device)
+    images, labels = next(iter(train_loader))
+    images = images.to(device)
+    labels = labels.to(device)
 
     loss_fn = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
@@ -250,11 +316,37 @@ if __name__ == "__main__":
     final_test_acc = check_accuracy(test_loader, model)
     print(f'Final Test Accuracy: {final_test_acc:.2f}%')
 
-    # Example of how to use the tracked history for plotting
-    plt.figure(figsize=(10, 4))
-    plt.plot(history['train_loss'], label='Training Loss')
-    plt.title('Loss over Epochs')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
+
+    ### TESTING ####
+    # pytorch imageloader labels are in alphabetical order
+    classification_summary(model, images, labels, class_names=['glioma', 'meningioma', 'no_tumor', 'pituitary'])
+
+    # Permutation test
+    real_accuracy, permutation_scores, pvalue = permutation_test(
+        model, images, labels, permutations=1000
+    )
+
+    print(f"real_accuracy score: {real_accuracy:.4f}")
+    print(f"Permutation scores: {permutation_scores[:10]}...")  # print first 10 scores
+    print(f"P-value: {pvalue:.4f}")
+
+    # plot training loss and test accuracy to see trends and check for overfitting
+    fig, ax1 = plt.subplots()
+
+    # Plot training loss
+    color = 'tab:blue'
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Training Loss', color=color)
+    ax1.plot(history['train_loss'], color=color, label='Training Loss')
+    ax1.tick_params(axis='y', labelcolor=color)
+
+    # Create second axis for accuracy
+    ax2 = ax1.twinx()
+    color = 'tab:orange'
+    ax2.set_ylabel('Test Accuracy (%)', color=color)
+    ax2.plot(history['test_accuracy'], color=color, label='Test Accuracy')
+    ax2.tick_params(axis='y', labelcolor=color)
+
+    plt.title("Training Loss & Test Accuracy over Epochs")
+    fig.tight_layout()
     plt.show()
