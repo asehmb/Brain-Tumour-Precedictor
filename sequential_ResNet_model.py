@@ -1,3 +1,24 @@
+# =============================================================================
+# This file is part of Brain-Tumour Predictor.
+#
+# Copyright (C) 2025 Ajaydeep Sehmbi and Kiet Huynh
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# =============================================================================
+
+#TODO: refactor and clean up code, add comments where necessary
+#TODO: see where and if relu should be replaced with gelu
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -23,7 +44,7 @@ print(device)
 # HYPER PARAMETERS
 EPOCHS = 10
 BATCH_SIZE = 128
-LEARNING_RATE = 0.001
+LEARNING_RATE = 5e-4
 NUM_CLASSES = 4
 
 data_transforms = transforms.Compose(
@@ -56,8 +77,7 @@ class ResidualBlock(nn.Module):
             nn.Conv2d(in_channels, out_channels, kernel_size=3,
                       stride=stride, padding=1, bias=False),
             nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-
+            nn.GELU(),
             nn.Conv2d(out_channels, out_channels, kernel_size=3,
                       stride=1, padding=1, bias=False),
             nn.BatchNorm2d(out_channels),
