@@ -2,4 +2,6 @@
 .venv/
 Testing/
 Training/
+Full/
+__pycache__
 

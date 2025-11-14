@@ -129,13 +129,12 @@ class SmallResNet(nn.Module):
 
         self.layer4 = self._make_layer(256, 256, num_blocks=2, stride=2)
 
-        self.layer5 = self._make_layer(256, 512, num_blocks=2, stride=2)
 
         # After layer2 (with 224×224 input): (B, 128, 28, 28) --> (B, 64, 112, 112)
 
         # ---- Global average pool + FC ----
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))  # -> (B, 128, 1, 1)
-        self.fc = nn.Linear(512, num_classes)            # -> (B, num_classes)
+        self.fc = nn.Linear(256, num_classes)            # -> (B, num_classes)
 
     def _make_layer(self, in_channels, out_channels, num_blocks, stride):
         """
@@ -324,7 +323,8 @@ def classification_summary(model, X, y_true, class_names=None):
 
 if __name__ == "__main__":
     # Ensure model and data are on the same device
-    model = SmallResNet(in_channels=3, num_classes=NUM_CLASSES).to(device)
+    # model = SmallResNet(in_channels=3, num_classes=NUM_CLASSES).to(device)
+    model = Model(num_classes=NUM_CLASSES).to(device)
     images, labels = next(iter(train_loader))
     images = images.to(device)
     labels = labels.to(device)
@@ -371,6 +371,7 @@ if __name__ == "__main__":
     # Final evaluation (optional, as it was done on the last epoch)
     final_test_acc = check_accuracy(test_loader, model)
     print(f'Final Test Accuracy: {final_test_acc:.2f}%')
+    torch.save(model.state_dict(), 'resnet_model.pth')
 
 
     ### TESTING ####
