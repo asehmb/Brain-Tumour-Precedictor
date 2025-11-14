@@ -17,8 +17,9 @@ device = "cuda" if t.cuda.is_available() else "cpu"
 
 #label the image data,
 transform = transforms.Compose([transforms.Resize((224,224)),
+                                transforms.Grayscale(num_output_channels=1),
                                 transforms.ToTensor(),
-                                transforms.Normalize((0.5,), (0.5,))])
+                                transforms.Normalize((0.5,), (0.25,))])
 
 #create data folder
 train_dataset = datasets.ImageFolder('Training', transform=transform)
@@ -48,49 +49,106 @@ show_img(make_grid(images))
 '''
 
 class Model(nn.Module):
-    def __init__(self, in_channels, num_classes):
+    def __init__(self, in_channels = 1, num_classes = 4):
         super(Model, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels = 3, out_channels = 32, kernel_size = 4, padding = 1, stride = 1)
-        self.relu1 = nn.ReLU()
-        self.pool1 = nn.MaxPool2d(kernel_size = 4, stride = 1)
-        self.conv2 = nn.Conv2d(in_channels = 32, out_channels = 64, kernel_size = 4, padding = 1, stride = 1)
-        self.relu2 = nn.ReLU()
-        self.pool2 = nn.MaxPool2d(kernel_size = 4, stride = 1)
 
-        self.fc_layer = nn.Sequential(
-            nn.Linear(in_features = 2985984, out_features = 128),
-            nn.ReLU(),
-            nn.Dropout(p = 0.5),
-            nn.Linear(in_features = 128, out_features = num_classes),
-        )
+        # input layer
+        self.relu = nn.ReLU()
+        self.pool = nn.MaxPool2d(kernel_size = 2, stride = 2)
+        self.dropout = nn.Dropout(p = 0.5)
+
+        # convolutional layers
+        self.conv1 = nn.Conv2d(in_channels = in_channels, out_channels = 32, kernel_size = 3, padding = 1)    # 32, 224, 224
+        self.conv2 = nn.Conv2d(in_channels = 32, out_channels = 64, kernel_size = 3, padding = 1)   # 64, 112, 112
+        self.conv3 = nn.Conv2d(in_channels = 64, out_channels = 128, kernel_size = 3, padding = 1)  # 128, 56, 56
+        self.conv4 = nn.Conv2d(in_channels = 128, out_channels = 256, kernel_size = 3, padding = 1) # 256, 28, 28
+        self.conv5 = nn.Conv2d(in_channels = 256, out_channels = 256, kernel_size = 3, padding = 1) # 256, 14, 14
+
+        # output layer
+        self.flatten = nn.Flatten()
+        self.fc1 = nn.Linear(in_features = 256 * 7 * 7, out_features = 512)
+        self.fc2 = nn.Linear(in_features = 512, out_features = num_classes)
 
     def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = self.pool1(x)
-        x = F.relu(self.conv2(x))
-        x = self.pool2(x)
-        x = t.flatten(x,1)
-        x = self.fc_layer(x)
+        x = self.pool(self.relu(self.conv1(x)))     # B, 32, 112, 112
+        x = self.pool(self.relu(self.conv2(x)))     # B, 64, 56, 56
+        x = self.pool(self.relu(self.conv3(x)))     # B, 128, 28, 28
+        x = self.pool(self.relu(self.conv4(x)))     # B, 256, 14, 14
+        x = self.pool(self.relu(self.conv5(x)))     # B, 256, 7, 7
+        x = self.flatten(x)
+        x = self.dropout(self.relu(self.fc1(x)))
+        x = self.fc2(x)
+
         return x
 
+
+def check_accuracy(loader, model):
+    """Calculates model accuracy on a given DataLoader."""
+    num_correct = 0
+    num_samples = 0
+    model.eval()  # Set model to evaluation mode (disables dropout, batchnorm updates)
+
+    with t.no_grad():  # Do not calculate gradients during evaluation
+        for x, y in loader:
+            x = x.to(device)
+            y = y.to(device)
+
+            scores = model(x)
+            # Get the index of the max value (the predicted class)
+            _, predictions = scores.max(1)
+            num_correct += (predictions == y).sum()
+            num_samples += predictions.size(0)
+
+    accuracy = float(num_correct) / float(num_samples) * 100
+    model.train()  # Set model back to training mode
+    return accuracy
+
+
+
 LEARNING_RATE = 0.01
-model = Model(in_channels = 1, num_classes=4)
+model = Model(in_channels = 1, num_classes=4).to(device)
 EPOCHS = 10
 loss_fn = nn.CrossEntropyLoss()             #using cross entropy loss
 optimizer = t.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
+# Initialize lists to store stats for plotting later
+history = {'train_loss': [], 'test_accuracy': []}
+
 for epoch in range(EPOCHS):
-    running_loss = 0
-    print(f'Epoch {epoch+1}/{EPOCHS}')
+    running_loss = 0.0
+    print(f'\n--- Epoch {epoch+1}/{EPOCHS} ---')
+    
+    # Training loop
+    model.train()  # Ensure model is in training mode
     for batch_idx, (inputs, targets) in enumerate(tqdm(train_loader)):
+        inputs, targets = inputs.to(device), targets.to(device)
 
         outputs = model(inputs)
         loss = loss_fn(outputs, targets)
 
         optimizer.zero_grad()
         loss.backward()
-
         optimizer.step()
 
-print(model.fc_layer.weight)
-print(model.fc_layer.bias)
+        running_loss += loss.item() * inputs.size(0)  # Accumulate weighted loss
+
+    # Calculate and record statistics
+    epoch_loss = running_loss / len(train_dataset)
+    history['train_loss'].append(epoch_loss)
+
+    # Check test accuracy
+    test_acc = check_accuracy(test_loader, model)
+    history['test_accuracy'].append(test_acc)
+
+    # Output stats
+    print(f"Training Loss: {epoch_loss:.4f}")
+    print(f"Test Accuracy: {test_acc:.2f}%")
+
+print('\nFinished Training')
+
+# Final evaluation
+final_test_acc = check_accuracy(test_loader, model)
+print(f'Final Test Accuracy: {final_test_acc:.2f}%')
+
+print(model.fc2.weight)
+print(model.fc2.bias)
