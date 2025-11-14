@@ -11,18 +11,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 #TODO: find out how to setup up mlx or the apple one
-device = "cuda" if torch.cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "mps" if torch.mps.is_available() else "cpu"
+print(device)
 
 # HYPER PARAMETERS
 EPOCHS = 10
 BATCH_SIZE = 256
-LEARNING_RATE = 0.01
+LEARNING_RATE = 0.001
 NUM_CLASSES = 4
 
 data_transforms = transforms.Compose(
     [transforms.ToTensor(),
-     transforms.Grayscale(num_output_channels=1),
-     transforms.Normalize((0.5,), (0.5,)),
+     transforms.Normalize((0.5,0.5,0.5,), (0.25,0.25,0.25,)),
      transforms.Resize((224, 224)),
      ])
 
@@ -34,9 +34,111 @@ train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, num_wo
 test_loader = DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-class CNN(nn.Module):
+class ResidualBlock(nn.Module):
+    """
+    Basic ResNet-style block:
+    input:  (B, in_channels, H, W)
+    output: (B, out_channels, H/stride, W/stride)
+    """
+    def __init__(self, in_channels, out_channels, stride=1):
+        super().__init__()
+
+        # Main conv path (F(x))
+        self.conv_block = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3,
+                      stride=stride, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(out_channels, out_channels, kernel_size=3,
+                      stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+        )
+
+        # Skip path: identity or 1×1 conv if shape changes
+        if stride != 1 or in_channels != out_channels:
+            self.downsample = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels,
+                          kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels),
+            )
+        else:
+            self.downsample = None
+
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        identity = x
+
+        out = self.conv_block(x)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+        return out
+
+
+class SmallResNet(nn.Module):
     def __init__(self, in_channels=3, num_classes=4):
+        super().__init__()
+        # ---- Stem (like ResNet) ----
+        # Input: (B, 3, 224, 224)
+        self.stem = nn.Sequential(
+            nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+        )
+        # Output after stem: ~ (B, 64, 56, 56) for 224×224 input
+
+        # ---- Residual stages ----
+        # Stage 1: keep spatial size (stride=1), 2 blocks of 64 channels
+        self.layer1 = self._make_layer(64, 64, num_blocks=2, stride=1)
+
+        # Stage 2: downsample (stride=2), 2 blocks of 128 channels
+        self.layer2 = self._make_layer(64, 128, num_blocks=2, stride=2)
+
+        # After layer2 (with 224×224 input): (B, 128, 28, 28)
+
+        # ---- Global average pool + FC ----
+        self.global_pool = nn.AdaptiveAvgPool2d((1, 1))  # -> (B, 128, 1, 1)
+        self.fc = nn.Linear(128, num_classes)            # -> (B, num_classes)
+
+    def _make_layer(self, in_channels, out_channels, num_blocks, stride):
+        """
+        Build a stage: first block can downsample (stride>1), others keep size.
+        Returns an nn.Sequential of ResidualBlocks.
+        """
+        layers = []
+        # First block: may change channels and/or stride
+        layers.append(ResidualBlock(in_channels, out_channels, stride=stride))
+
+        # Remaining blocks: same channels, stride = 1
+        for _ in range(1, num_blocks):
+            layers.append(ResidualBlock(out_channels, out_channels, stride=1))
+
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        # x: (B, in_channels, H, W) e.g. (B, 3, 224, 224)
+        x = self.stem(x)      # -> (B, 64, 56, 56)
+        x = self.layer1(x)    # -> (B, 64, 56, 56)
+        x = self.layer2(x)    # -> (B, 128, 28, 28)
+
+        x = self.global_pool(x)   # -> (B, 128, 1, 1)
+        x = torch.flatten(x, 1)   # -> (B, 128)
+        x = self.fc(x)            # -> (B, num_classes) logits
+        return x
+
+# not optimized, preliminary testing
+class CNN(nn.Module):
+    def __init__(self, in_channels=1, num_classes=4):
         """
         :param in_channels: number of input channels --- 1 maybe for grayscale 3 for rgb
         :param num_classes: number of output classes --- 4 for this project
@@ -48,6 +150,7 @@ class CNN(nn.Module):
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
         # convolutional layer 2
         self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, padding=1, stride=1)
+        self.dropout = nn.Dropout(p=0.5)
         # in_features = out_chanels*(kernel_size*kernel_size)
         self.fc1 = nn.Linear(in_features=193600, out_features=num_classes)
 
@@ -60,6 +163,7 @@ class CNN(nn.Module):
         x = F.relu(self.conv2(x))       # apply 2nd conv layer and ReLu activation
         x = self.pool(x)                # apply max pooling
         x = x.reshape(x.shape[0], -1)   #flatten
+        x = self.dropout(x)
         x = F.relu(self.fc1(x))         # apply full layer
         return x
 
@@ -94,7 +198,7 @@ def check_accuracy(loader, model):
 
 if __name__ == "__main__":
     # Ensure model and data are on the same device
-    model = CNN(in_channels=1, num_classes=NUM_CLASSES).to(device)
+    model = SmallResNet(in_channels=3, num_classes=NUM_CLASSES).to(device)
 
     loss_fn = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
