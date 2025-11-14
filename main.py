@@ -9,15 +9,18 @@ from tqdm.auto import tqdm
 
 import numpy as np
 import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 #TODO: find out how to setup up mlx or the apple one
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.mps.is_available() else "cpu"
 print(device)
 
 # HYPER PARAMETERS
-EPOCHS = 10
-BATCH_SIZE = 256
-LEARNING_RATE = 0.001
+EPOCHS = 15
+BATCH_SIZE = 128
+LEARNING_RATE = 0.001 # maybe increase learning rate but increase epochs
 NUM_CLASSES = 4
 
 data_transforms = transforms.Compose(
@@ -34,9 +37,7 @@ train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, num_wo
 test_loader = DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
 
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+
 
 class ResidualBlock(nn.Module):
     """
@@ -87,7 +88,6 @@ class ResidualBlock(nn.Module):
 class SmallResNet(nn.Module):
     def __init__(self, in_channels=3, num_classes=4):
         super().__init__()
-        # ---- Stem (like ResNet) ----
         # Input: (B, 3, 224, 224)
         self.stem = nn.Sequential(
             nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False),
@@ -96,19 +96,22 @@ class SmallResNet(nn.Module):
             nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
         )
         # Output after stem: ~ (B, 64, 56, 56) for 224×224 input
+        self.dropout = nn.Dropout(p=0.5)
 
-        # ---- Residual stages ----
-        # Stage 1: keep spatial size (stride=1), 2 blocks of 64 channels
         self.layer1 = self._make_layer(64, 64, num_blocks=2, stride=1)
 
-        # Stage 2: downsample (stride=2), 2 blocks of 128 channels
+        # TODO: is it worth adding more layers or changing num_blocks?
         self.layer2 = self._make_layer(64, 128, num_blocks=2, stride=2)
+
+        self.layer3 = self._make_layer(128, 256, num_blocks=2, stride=2)
+
+        self.layer4 = self._make_layer(256, 512, num_blocks=2, stride=2)
 
         # After layer2 (with 224×224 input): (B, 128, 28, 28)
 
         # ---- Global average pool + FC ----
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))  # -> (B, 128, 1, 1)
-        self.fc = nn.Linear(128, num_classes)            # -> (B, num_classes)
+        self.fc = nn.Linear(512, num_classes)            # -> (B, num_classes)
 
     def _make_layer(self, in_channels, out_channels, num_blocks, stride):
         """
@@ -126,10 +129,14 @@ class SmallResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        # TODO: test dropout placement, maybe add more pooling?
         # x: (B, in_channels, H, W) e.g. (B, 3, 224, 224)
         x = self.stem(x)      # -> (B, 64, 56, 56)
+        # x = self.dropout(x)
         x = self.layer1(x)    # -> (B, 64, 56, 56)
         x = self.layer2(x)    # -> (B, 128, 28, 28)
+        x = self.layer3(x)    # -> (B, 256, 14, 14)
+        x = self.layer4(x)    # -> (B, 512, 7, 7)
 
         x = self.global_pool(x)   # -> (B, 128, 1, 1)
         x = torch.flatten(x, 1)   # -> (B, 128)
@@ -244,10 +251,10 @@ if __name__ == "__main__":
     print(f'Final Test Accuracy: {final_test_acc:.2f}%')
 
     # Example of how to use the tracked history for plotting
-    # plt.figure(figsize=(10, 4))
-    # plt.plot(history['train_loss'], label='Training Loss')
-    # plt.title('Loss over Epochs')
-    # plt.xlabel('Epoch')
-    # plt.ylabel('Loss')
-    # plt.legend()
-    # plt.show()
+    plt.figure(figsize=(10, 4))
+    plt.plot(history['train_loss'], label='Training Loss')
+    plt.title('Loss over Epochs')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.show()
